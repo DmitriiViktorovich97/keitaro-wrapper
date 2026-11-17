@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keitaro Wrapper</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#6b7385; --line:#e2e5ec; --accent:#2f6fed; --danger:#d23c3c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171d; --card:#1c2029; --text:#e8eaf0; --muted:#8c94a8; --line:#2b3140; --accent:#5b8cff; --danger:#ef6a6a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  nav { display:flex; gap:8px; margin-bottom:16px; }
+  nav button { background:var(--card); color:var(--text); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; }
+  nav button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  input, select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; }
+  button.primary { margin-top:16px; background:var(--accent); color:#fff; border:0; padding:10px 16px; border-radius:8px; cursor:pointer; font:inherit; }
+  button:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  th { font-size:12px; color:var(--muted); font-weight:500; }
+  td.num, th.num { text-align:right; font-variant-numeric: tabular-nums; }
+  .del { background:none; border:1px solid var(--line); color:var(--danger); border-radius:6px; padding:4px 10px; cursor:pointer; }
+  .row { display:flex; gap:8px; align-items:flex-end; }
+  .row > div { flex:1; }
+  .row button { margin:0; white-space:nowrap; }
+  #msg { margin-top:12px; padding:10px 12px; border-radius:8px; display:none; }
+  #msg.ok { display:block; background:rgba(47,160,90,.15); }
+  #msg.err { display:block; background:rgba(210,60,60,.15); }
+  .muted { color:var(--muted); }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Keitaro Wrapper</h1>
+  <nav>
+    <button id="tab-create" class="active">Создать кампанию</button>
+    <button id="tab-edit">Редактор кампании</button>
+  </nav>
+
+  <section id="view-create" class="card">
+    <label>Название кампании</label>
+    <input id="c-name" maxlength="255">
+    <label>Гео (код страны, например NL)</label>
+    <input id="c-geo" maxlength="2" placeholder="NL">
+    <label>Оффер</label>
+    <select id="c-offer"></select>
+    <label>Домен</label>
+    <select id="c-domain"></select>
+    <label>Группа</label>
+    <select id="c-group"></select>
+    <label>Источник трафика</label>
+    <select id="c-source"></select>
+    <button class="primary" id="c-submit">Создать</button>
+  </section>
+
+  <section id="view-edit" class="card hidden">
+    <label>Кампания</label>
+    <select id="e-campaign"></select>
+    <div id="e-body" class="hidden">
+      <table>
+        <thead><tr><th>ID</th><th>Оффер</th><th class="num">Доля, %</th><th></th></tr></thead>
+        <tbody id="e-rows"></tbody>
+        <tfoot><tr><th colspan="2">Итого</th><th class="num" id="e-total"></th><th></th></tr></tfoot>
+      </table>
+      <div class="row" style="margin-top:16px">
+        <div><label>Добавить оффер</label><select id="e-offer"></select></div>
+        <button class="primary" id="e-add">Добавить</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="msg"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let offersCatalog = [];
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function show(text, ok) {
+  const m = $("msg");
+  m.textContent = text;
+  m.className = ok ? "ok" : "err";
+}
+async function api(path, opts = {}) {
+  const res = await fetch("/api" + path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const j = await res.json();
+      detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+    } catch (_) {}
+    throw new Error(detail);
+  }
+  return res.status === 204 ? null : res.json();
+}
+function fill(sel, items, placeholder) {
+  $(sel).innerHTML =
+    (placeholder ? `<option value="">${esc(placeholder)}</option>` : "") +
+    items.map((i) => `<option value="${esc(i.id)}">${esc(i.name)} (#${esc(i.id)})</option>`).join("");
+}
+
+function switchTab(name) {
+  for (const t of ["create", "edit"]) {
+    $("tab-" + t).classList.toggle("active", t === name);
+    $("view-" + t).classList.toggle("hidden", t !== name);
+  }
+  $("msg").className = "";
+  if (name === "edit") loadCampaigns();
+}
+$("tab-create").onclick = () => switchTab("create");
+$("tab-edit").onclick = () => switchTab("edit");
+
+async function loadDictionaries() {
+  try {
+    const [offers, domains, groups, sources] = await Promise.all([
+      api("/keitaro/offers"), api("/keitaro/domains"),
+      api("/keitaro/groups"), api("/keitaro/sources"),
+    ]);
+    offersCatalog = offers;
+    fill("c-offer", offers);
+    fill("c-domain", domains);
+    fill("c-group", groups);
+    fill("c-source", sources);
+  } catch (e) {
+    show("Не удалось загрузить справочники Keitaro: " + e.message, false);
+  }
+}
+
+$("c-submit").onclick = async () => {
+  const btn = $("c-submit");
+  const body = {
+    name: $("c-name").value.trim(),
+    geo: $("c-geo").value.trim().toUpperCase(),
+    offer_id: +$("c-offer").value,
+    domain_id: +$("c-domain").value,
+    group_id: +$("c-group").value,
+    source_id: +$("c-source").value,
+  };
+  if (!body.name) return show("Укажи название", false);
+  if (!/^[A-Z]{2}$/.test(body.geo)) return show("Гео — двухбуквенный код страны", false);
+  btn.disabled = true;
+  try {
+    const c = await api("/campaigns", { method: "POST", body: JSON.stringify(body) });
+    show(`Кампания создана: «${c.name}», Keitaro ID ${c.keitaro_campaign_id}`, true);
+    $("c-name").value = "";
+  } catch (e) {
+    show("Ошибка: " + e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+async function loadCampaigns() {
+  try {
+    const items = await api("/campaigns");
+    $("e-campaign").innerHTML =
+      `<option value="">— выбери кампанию —</option>` +
+      items.map((c) => `<option value="${c.id}">${esc(c.name)} [${esc(c.geo)}] #${c.keitaro_campaign_id}</option>`).join("");
+    $("e-body").classList.add("hidden");
+  } catch (e) {
+    show("Не удалось загрузить кампании: " + e.message, false);
+  }
+}
+
+function renderOffers(rows) {
+  $("e-rows").innerHTML = rows.map((o) => `
+    <tr>
+      <td>${esc(o.keitaro_offer_id)}</td>
+      <td>${esc(o.name ?? "—")}</td>
+      <td class="num">${esc(o.share)}</td>
+      <td class="num"><button class="del" data-id="${esc(o.keitaro_offer_id)}" ${rows.length === 1 ? "disabled title='Нельзя удалить последний оффер'" : ""}>Удалить</button></td>
+    </tr>`).join("");
+  $("e-total").textContent = rows.reduce((s, o) => s + o.share, 0);
+  const used = new Set(rows.map((o) => o.keitaro_offer_id));
+  fill("e-offer", offersCatalog.filter((o) => !used.has(o.id)));
+  $("e-add").disabled = $("e-offer").options.length === 0;
+}
+
+async function loadOffers() {
+  const id = $("e-campaign").value;
+  if (!id) return $("e-body").classList.add("hidden");
+  try {
+    renderOffers(await api(`/campaigns/${id}/offers`));
+    $("e-body").classList.remove("hidden");
+  } catch (e) {
+    show("Не удалось загрузить офферы: " + e.message, false);
+  }
+}
+$("e-campaign").onchange = () => { $("msg").className = ""; loadOffers(); };
+
+$("e-add").onclick = async () => {
+  const cid = $("e-campaign").value;
+  const offerId = +$("e-offer").value;
+  if (!cid || !offerId) return;
+  $("e-add").disabled = true;
+  try {
+    renderOffers(await api(`/campaigns/${cid}/offers`, { method: "POST", body: JSON.stringify({ offer_id: offerId }) }));
+    show("Оффер добавлен, доли пересчитаны", true);
+  } catch (e) {
+    show("Ошибка: " + e.message, false);
+    $("e-add").disabled = false;
+  }
+};
+
+$("e-rows").onclick = async (ev) => {
+  const btn = ev.target.closest(".del");
+  if (!btn) return;
+  const cid = $("e-campaign").value;
+  if (!confirm(`Удалить оффер #${btn.dataset.id} из кампании?`)) return;
+  btn.disabled = true;
+  try {
+    renderOffers(await api(`/campaigns/${cid}/offers/${btn.dataset.id}`, { method: "DELETE" }));
+    show("Оффер удалён, доли пересчитаны", true);
+  } catch (e) {
+    show("Ошибка: " + e.message, false);
+    btn.disabled = false;
+  }
+};
+
+loadDictionaries();
+</script>
+</body>
+</html>

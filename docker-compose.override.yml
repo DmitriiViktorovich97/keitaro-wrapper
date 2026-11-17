@@ -1,0 +1,6 @@
+services:
+  app:
+    volumes:
+      - ./app:/app/app
+    environment:
+      UVICORN_ARGS: --reload
